@@ -1,103 +1,23 @@
 use std::{
     fs, //access to files / file system
-    //env, //give access to environment stuff
     fmt::Debug,
     error::Error,//allows for some better errors
     path::{Path, PathBuf}, ffi::OsString, //system specific file separator, and path operations
 };
 
-
-//tests
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn config_help_flag() {
-        let args: Vec<String> = vec![String::from("-h")];
-        let expected_config: Config = Config{
-            path: String::new(),
-            path_is_directory:false,
-            extensions_to_filter_for: Vec::new(),
-            output_format: FORMAT::Default,
-            search_subdirectories_recursively:false,
-            show_help:true,
-        };
-        let actual_config = Config::new(&args).expect("test resulted in error creating config");
-
-        assert_eq!(expected_config, actual_config);
-    }
-    #[test]
-    fn config_no_arguments_given() {
-        let args: Vec<String> = vec![];
-        let expected_config: Config = Config{
-            path: String::new(),
-            path_is_directory:false,
-            extensions_to_filter_for: Vec::new(),
-            output_format: FORMAT::Default,
-            search_subdirectories_recursively:false,
-            show_help:true,
-        };
-        let actual_config = Config::new(&args).expect("test resulted in error creating config");
-
-        assert_eq!(expected_config, actual_config);
-    }
-    #[test]
-    fn config_filter_for_extension() {
-        let args: Vec<String> = vec!["--f", "exe,rs", "../"]
-        .iter().map(|s| s.to_string()).collect(); //this is just because i'm too lazy to manually make all the str's into strings
-
-        let expected_config: Config = Config{
-            path: String::from("../"),
-            path_is_directory:true,
-            extensions_to_filter_for: vec!["rs".to_string(),"exe".to_string()],
-            output_format: FORMAT::Default,
-            search_subdirectories_recursively:false,
-            show_help:false,
-        };
-        let actual_config = Config::new(&args).expect("test resulted in error creating config");
-
-        assert_eq!(expected_config, actual_config);
-    }
-    #[test]
-    fn search_normal_text() {
-        let text = "
-Lorem ipsum dolor sit amet, consectetur adipiscing elit.
-Nullam vitae suscipit ipsum. 
-Etiam pulvinar ullamcorper scelerisque. Aliquam malesuada libero nec ante commodo ornare. 
-Nam nec leo diam. 
-Suspendisse lectus dolor, tristique tempus massa sit amet, feugiat vehicula elit. Sed eu nisl porta, hendrerit augue at, laoreet ex. 
-Nam sollicitudin tempor ligula quis condimentum. 
-Donec id pretium sapien, eu pharetra neque. In tempus tortor in congue cursus.";
-
-        assert_eq!(count_lines(text), 7);
-    }
-    #[test]
-    fn search_empty_text() {
-        let text = "";
-
-        assert_eq!(count_lines(text), 0);
-    }
-    #[test]
-    fn search_new_line_characters_inserted() {
-        let text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit.\nNullam vitae suscipit ipsum.\nEtiam pulvinar ullamcorper scelerisque. Aliquam malesuada libero nec ante commodo ornare.\nNam nec leo diam.\nSuspendisse lectus dolor, tristique tempus massa sit amet, feugiat vehicula elit. Sed eu nisl porta, hendrerit augue at, laoreet ex.\nNam sollicitudin tempor ligula quis condimentum.\nDonec id pretium sapien, eu pharetra neque. In tempus tortor in congue cursus.";
-
-        assert_eq!(count_lines(text), 7);
-    }
-}
-
 //handles output format
 #[derive(Debug, PartialEq)]
 pub enum FORMAT {
     Default,
-    MarkdownList,
+    Bullet,
+    Markdown,
     Numeric,
 }
 
 //handles parsing of arguments
-const VALID_OPTIONS: [&str; 8] = [
-    "--filter-for-extensions",
-    "--format=MARKDOWN-LIST","--format=NUMERIC",
+const VALID_OPTIONS: [&str; 11] = [
+    "-f", "--filter",
+    "--format=DEFAULT","--format=BULLET", "--format=MARKDOWN","--format=NUMERIC",
     "-r", "--recursive",
     "-h", "--help", "help",
 ];
@@ -111,7 +31,7 @@ pub struct Config {
     pub show_help: bool,
 }
 impl Config {
-    pub fn new(args: &[String]) -> Result<Config, &str> {
+    pub fn new(args: &[String]) -> Result<Config, Box<dyn Error>> {
         //DATA
         let mut config: Config = Config {
             path: String::new(),
@@ -132,24 +52,32 @@ impl Config {
         }
 
         //parse arguments for options
-        options = (&args[1..]).iter()//iterator of arguments that ignores the first one
+        options = (&args[0..]).iter()//iterator of arguments that ignores the first one
         .filter(|a| a.starts_with("-"))//filter out things that don't start with '-'
-        .map(|a|a.to_lowercase().clone())//clone the strings
-        .filter(|o| VALID_OPTIONS.contains(&o.as_str()))//filter out options that aren't valid
+        .map(|a|a.to_string())//clone the strings
         .collect(); //collect into vector
+
+        if !options.iter().all(|o| VALID_OPTIONS.contains(&o.as_str())) {
+            //if there are invalid arguments, throw an error
+            return Err("One or more invalid arguments.".into());
+        }
 
         //parse arguments for the path
         //last argument
         path = args.last().unwrap().to_string(); 
 
         //modify config as needed depending on options passed
+        let mut extensions_to_filter_for_or_error = Ok(Vec::new());
         options.iter().for_each(|option| {
-            match option.trim() {
+            match option.as_str() {
                 /* filter for extensions */
                 //if list_after_option() failed, print the error to std_err and set config.extensions_to_filter_for to an empty vector, otherwise set config.extensions_to_filter_for to the vector returned
-                "--filter-for-extensions" => config.extensions_to_filter_for = get_list_from_args_after_option(&args, "--filter-for-extensions").unwrap_or_else(|e| {eprintln!("Error finding extensions list: {}", e);Vec::new()}), //if li
+                "-f" => extensions_to_filter_for_or_error = get_list_from_args_after_option(&args, "-f"),
+                "--filter" => extensions_to_filter_for_or_error = get_list_from_args_after_option(&args, "--filter"),
                 /* output format */
-                "--format=MARKDOWN-LIST" => config.output_format = FORMAT::MarkdownList,
+                "--format=DEFAULT" => config.output_format = FORMAT::Default,
+                "--format=BULLET" => config.output_format = FORMAT::Bullet,
+                "--format=MARKDOWN" => config.output_format = FORMAT::Markdown,
                 "--format=NUMERIC" => config.output_format = FORMAT::Numeric,
                 /* search subdirectories recursively */
                 "-r"|"--recursive" => config.search_subdirectories_recursively = true,
@@ -158,6 +86,16 @@ impl Config {
                 _ => {},
             }
         });
+        match extensions_to_filter_for_or_error {
+            Err(e) => return Err( format!("Error finding extensions list: {}", e).into()),
+            Ok(vec) => if !vec.is_empty() {config.extensions_to_filter_for = vec;},
+        }
+
+        //if help, exit early
+        if config.show_help {
+            return Ok(config);
+        }
+
 
         //extract / verify the path
         full_path = Path::new(&path);
@@ -167,7 +105,7 @@ impl Config {
             config.path = path;
         } else {
             //return an error
-            return Err("Invalid path given")
+            return Err("Invalid path given".into())
         }
         
 
@@ -178,18 +116,33 @@ impl Config {
 //private function that goes through the arguments to find a list after a specified option
 fn get_list_from_args_after_option<'a>(args:&[String], option: &'a str) -> Result<Vec<String>,&'a str> {
     //move iterator to the specified option
-    let mut arg_iter = args.iter();
-    let mut arg = arg_iter.next().unwrap_or(&String::new()).clone();
-    while !arg.eq_ignore_ascii_case(option) {arg = arg_iter.next().unwrap_or(&String::new()).clone()} //advance iterator to "--filter-for-extensions"
-
-    //get the list, return an error if it's not found
-    match arg_iter.next().ok_or("ran out of arguments, could not find extensions list") {
-        Ok(extension_list) => return Ok(
-            extension_list.clone().chars().filter(|c| c.is_ascii_alphabetic() || c.eq_ignore_ascii_case(&',')).collect::<String>() //remove invalid characters
-            .split(",").filter_map(|s| (!s.is_empty()).then(|| s.to_ascii_lowercase())).collect() //split the string into vector at Commas, then remove empty values and convert to lowercase
-        ),
-        Err(err) => return Err(err.clone()), //return with the error
+    let next_arg;
+    
+    //get position of option in args
+    let pos;
+    match args.iter().position(|arg| arg.eq(&option)).ok_or("Could not find option in args.") {
+        Ok(index) => pos = index,
+        Err(e) => return Err(e),
     }
+
+    //if there is not an argument between it and the last argument
+    if args.len() <= 2 || pos > args.len() - 2 {
+        return Err("Not enough arguments, Or no list found.");
+    }
+
+    //get the list
+    next_arg = &args[pos+1];
+    //throw an error if the "list" is actually an option
+    if VALID_OPTIONS.contains(&next_arg.as_str()) {
+        return Err("No list found.");
+    }
+
+
+    //create and return the list
+    return Ok(
+        next_arg.clone().chars().filter(|c| c.is_ascii_alphabetic() || c.eq(&',')).collect::<String>() //remove invalid characters
+        .split(",").filter_map(|s| (!s.is_empty()).then(|| s.to_ascii_lowercase())).collect() //split the string into vector at Commas, then remove empty values and convert to lowercase
+    )
 }
 
 
@@ -235,6 +188,9 @@ pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
                 }
                 return false;
             }).collect();
+        } else {
+            //just filter out things that return None from .extension
+            paths_to_process = paths_to_process.into_iter().filter(|raw_path| raw_path.extension().is_some()).collect();
         }
 
         //count lines of every file in paths_to_process
@@ -242,15 +198,17 @@ pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
         for path_name in paths_to_process.into_iter().filter_map(|p| p.into_os_string().into_string().ok()) { //convert them all into strings
             let count = match count_lines_of_file(&path_name) {
                 Ok(c) => c,
-                Err(e) => return Err(e), 
+                Err(e) => {eprintln!("!\t{}",e); continue;}, //just print errors to std. error, no use ending the program early 
             };
 
             //format output as specified by config.output_format
             match config.output_format {
-                FORMAT::Default => println!("{}: {} Lines", path_name, count),
-                FORMAT::MarkdownList => println!("- {}: {} Lines", path_name, count),
-                FORMAT::Numeric => println!("{}.) {}: {} Lines", i, path_name, count),
+                FORMAT::Default => print!("\t"),
+                FORMAT::Bullet => print!("*\t"),
+                FORMAT::Markdown => print!("-\t"),
+                FORMAT::Numeric => print!("{}.)\t", i),
             }
+            println!("{}: {} Lines", path_name, count);
 
             i+=1;
         };
@@ -289,15 +247,19 @@ pub fn count_lines<'a>(file_contents: &'a str) -> usize {
  * print instructions
  */
 pub fn help() {
-    println!("line-counter.exe");
-    println!("count lines of a file or of files in directory\n");
+    println!("                              line-counter.exe");
+    println!("                              By Anthony Rubick\n");
+    println!("count lines of a file or of all files in directory\n");
 
     println!("USAGE:\n\tline-counter.exe [OPTIONS]... [PATH]\n");
 
     println!("OPTIONS:");
-    println!("\t\t--filter-for-extensions <EXTENSIONS>...\t\tComma separated list of extensions, will only count lines of files with these extensions");
-    println!("\t-r,\t--recursive\t\t\t\t\tSearch through subdirectories");
-    println!("\t-h,\t-help\t\t\t\t\t\tPrints help information");
+    println!("\t-f\t--filter <EXTENSIONS>...\t\tComma separated list of extensions, will only count lines of files with these extensions");
+    println!("\t\t--format=[FORMAT]\t\t\tFormat the output in a list, valid formats are: DEFAULT, BULLET, MARKDOWN, and NUMERIC");
+    println!("\t-r,\t--recursive\t\t\t\tSearch through subdirectories");
+    println!("\t-h,\t-help\t\t\t\t\tPrints help information\n");
+
+    println!("PATH:\n\tPath to search\n\n")
 }
 
 /**
@@ -336,4 +298,268 @@ fn list_files(path: &Path) -> Vec<PathBuf> {
         }
     }
     return vec;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//tests
+#[cfg(test)]
+mod tests {
+    use std::vec;
+
+    use super::*;
+
+
+
+    #[test]
+    fn config_null_test() {
+        let args: Vec<String> = vec![];
+        let expected_config: Config = Config{
+            path: String::new(),
+            path_is_directory:false,
+            extensions_to_filter_for: Vec::new(),
+            output_format: FORMAT::Default,
+            search_subdirectories_recursively:false,
+            show_help:true,
+        };
+        let actual_config = Config::new(&args).expect("test resulted in error creating config");
+
+        assert_eq!(expected_config, actual_config);
+    }
+    #[test]
+    fn config_all_features_short_flags() {
+        let args: Vec<String> = vec!["-r","--format=NUMERIC","-f","exe,rs","../"].iter().map(|s| s.to_string()).collect();
+        let expected_config: Config = Config{
+            path: String::from("../"),
+            path_is_directory:true,
+            extensions_to_filter_for: vec!["exe".to_string(),"rs".to_string()],
+            output_format: FORMAT::Numeric,
+            search_subdirectories_recursively:true,
+            show_help:false,
+        };
+        let actual_config = Config::new(&args).expect("test resulted in error creating config");
+
+        assert_eq!(expected_config, actual_config);
+    }
+    #[test]
+    fn config_all_features_long_flags() {
+        let args: Vec<String> = vec!["--recursive","--filter","exe,rs", "--format=MARKDOWN","../"].iter().map(|s| s.to_string()).collect();
+        let expected_config: Config = Config{
+            path: String::from("../"),
+            path_is_directory:true,
+            extensions_to_filter_for: vec!["exe".to_string(),"rs".to_string()],
+            output_format: FORMAT::Markdown,
+            search_subdirectories_recursively:true,
+            show_help:false,
+        };
+        let actual_config = Config::new(&args).expect("test resulted in error creating config");
+
+        assert_eq!(expected_config, actual_config);
+    }
+    #[test]
+    fn config_help_short_flag() {
+        let args: Vec<String> = vec!["-h"].iter().map(|s| s.to_string()).collect();
+        let expected_config: Config = Config{
+            path: String::new(),
+            path_is_directory:false,
+            extensions_to_filter_for: Vec::new(),
+            output_format: FORMAT::Default,
+            search_subdirectories_recursively:false,
+            show_help:true,
+        };
+        let actual_config = Config::new(&args).expect("test resulted in error creating config");
+
+        assert_eq!(expected_config, actual_config);
+    }
+    #[test]
+    fn config_help_long_flag() {
+        let args: Vec<String> = vec!["--help"].iter().map(|s| s.to_string()).collect(); //this is just because i'm too lazy to manually make all the str's into strings
+
+
+        let expected_config: Config = Config{
+            path: String::new(),
+            path_is_directory:false,
+            extensions_to_filter_for: Vec::new(),
+            output_format: FORMAT::Default,
+            search_subdirectories_recursively:false,
+            show_help:true,
+        };
+        let actual_config = Config::new(&args).expect("test resulted in error creating config");
+
+        assert_eq!(expected_config, actual_config);
+    }
+    #[test]
+    fn config_filter_for_extension_short_flag() {
+        let args: Vec<String> = vec!["-f", "exe,rs", "../"].iter().map(|s| s.to_string()).collect(); //this is just because i'm too lazy to manually make all the str's into strings
+
+        let expected_config: Config = Config{
+            path: String::from("../"),
+            path_is_directory:true,
+            extensions_to_filter_for: vec!["exe".to_string(),"rs".to_string()],
+            output_format: FORMAT::Default,
+            search_subdirectories_recursively:false,
+            show_help:false,
+        };
+        let actual_config = Config::new(&args).expect("test resulted in error creating config");
+
+        assert_eq!(expected_config, actual_config);
+    }
+    #[test]
+    #[should_panic]
+    fn config_filter_for_extension_empty() {
+        let args: Vec<String> = vec!["-f", "../"].iter().map(|s| s.to_string()).collect(); //this is just because i'm too lazy to manually make all the str's into strings
+        //should panic here bc of invalid arguments
+        let _actual_config = Config::new(&args).expect("test resulted in error creating config");
+    }
+    #[test]
+    #[should_panic]
+    fn config_filter_for_extension_other_option_instead_of_flag() {
+        let args: Vec<String> = vec!["-f", "-r", "../"].iter().map(|s| s.to_string()).collect(); //this is just because i'm too lazy to manually make all the str's into strings
+        //should panic here bc of invalid arguments
+        let _actual_config = Config::new(&args).expect("test resulted in error creating config");
+    }
+    #[test]
+    fn config_filter_for_extension_long_flag() {
+        let args: Vec<String> = vec!["--filter", "exe,rs", "../"].iter().map(|s| s.to_string()).collect(); //this is just because i'm too lazy to manually make all the str's into strings
+
+        let expected_config: Config = Config{
+            path: String::from("../"),
+            path_is_directory:true,
+            extensions_to_filter_for: vec!["exe".to_string(),"rs".to_string()],
+            output_format: FORMAT::Default,
+            search_subdirectories_recursively:false,
+            show_help:false,
+        };
+        let actual_config = Config::new(&args).expect("test resulted in error creating config");
+
+        assert_eq!(expected_config, actual_config);
+    }
+    #[test]
+    fn config_recursion_short_flag() {
+        let args: Vec<String> = vec!["-r", "../"].iter().map(|s| s.to_string()).collect(); //this is just because i'm too lazy to manually make all the str's into strings
+
+        let expected_config: Config = Config{
+            path: String::from("../"),
+            path_is_directory:true,
+            extensions_to_filter_for: Vec::new(),
+            output_format: FORMAT::Default,
+            search_subdirectories_recursively:true,
+            show_help:false,
+        };
+        let actual_config = Config::new(&args).expect("test resulted in error creating config");
+
+        assert_eq!(expected_config, actual_config);
+    }
+    #[test]
+    fn config_recursion_long_flag() {
+        let args: Vec<String> = vec!["--recursive", "../"].iter().map(|s| s.to_string()).collect(); //this is just because i'm too lazy to manually make all the str's into strings
+
+        let expected_config: Config = Config{
+            path: String::from("../"),
+            path_is_directory:true,
+            extensions_to_filter_for: Vec::new(),
+            output_format: FORMAT::Default,
+            search_subdirectories_recursively:true,
+            show_help:false,
+        };
+        let actual_config = Config::new(&args).expect("test resulted in error creating config");
+
+        assert_eq!(expected_config, actual_config);
+    }
+    #[test]
+    fn config_format_bullet() {
+        let args: Vec<String> = vec!["--format=BULLET", "../"].iter().map(|s| s.to_string()).collect(); //this is just because i'm too lazy to manually make all the str's into strings
+
+        let expected_config: Config = Config{
+            path: String::from("../"),
+            path_is_directory:true,
+            extensions_to_filter_for: Vec::new(),
+            output_format: FORMAT::Bullet,
+            search_subdirectories_recursively:false,
+            show_help:false,
+        };
+        let actual_config = Config::new(&args).expect("test resulted in error creating config");
+
+        assert_eq!(expected_config, actual_config);
+    }
+    #[test]
+    fn config_format_markdown() {
+        let args: Vec<String> = vec!["--format=MARKDOWN", "../"].iter().map(|s| s.to_string()).collect(); //this is just because i'm too lazy to manually make all the str's into strings
+
+        let expected_config: Config = Config{
+            path: String::from("../"),
+            path_is_directory:true,
+            extensions_to_filter_for: Vec::new(),
+            output_format: FORMAT::Markdown,
+            search_subdirectories_recursively:false,
+            show_help:false,
+        };
+        let actual_config = Config::new(&args).expect("test resulted in error creating config");
+
+        assert_eq!(expected_config, actual_config);
+    }
+    #[test]
+    fn config_format_numeric() {
+        let args: Vec<String> = vec!["--format=NUMERIC", "../"].iter().map(|s| s.to_string()).collect(); //this is just because i'm too lazy to manually make all the str's into strings
+
+        let expected_config: Config = Config{
+            path: String::from("../"),
+            path_is_directory:true,
+            extensions_to_filter_for: Vec::new(),
+            output_format: FORMAT::Numeric,
+            search_subdirectories_recursively:false,
+            show_help:false,
+        };
+        let actual_config = Config::new(&args).expect("test resulted in error creating config");
+
+        assert_eq!(expected_config, actual_config);
+    }
+    #[test]
+    #[should_panic]
+    fn config_mixed_casing() {
+        let args: Vec<String> = vec!["-F","eXe,rs", "--forMAt=numMERIC","-r","../"].iter().map(|s| s.to_string()).collect();
+        //this should panic because of the improper capitalization
+        let _actual_config = Config::new(&args).expect("test resulted in error creating config");
+    }
+
+
+
+
+    #[test]
+    fn search_normal_text() {
+        let text = "
+Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+Nullam vitae suscipit ipsum. 
+Etiam pulvinar ullamcorper scelerisque. Aliquam malesuada libero nec ante commodo ornare. 
+Nam nec leo diam. 
+Suspendisse lectus dolor, tristique tempus massa sit amet, feugiat vehicula elit. Sed eu nisl porta, hendrerit augue at, laoreet ex. 
+Nam sollicitudin tempor ligula quis condimentum. 
+Donec id pretium sapien, eu pharetra neque. In tempus tortor in congue cursus.";
+
+        assert_eq!(count_lines(text), 7);
+    }
+    #[test]
+    fn search_empty_text() {
+        let text = "";
+
+        assert_eq!(count_lines(text), 0);
+    }
+    #[test]
+    fn search_new_line_characters_inserted() {
+        let text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit.\nNullam vitae suscipit ipsum.\nEtiam pulvinar ullamcorper scelerisque. Aliquam malesuada libero nec ante commodo ornare.\nNam nec leo diam.\nSuspendisse lectus dolor, tristique tempus massa sit amet, feugiat vehicula elit. Sed eu nisl porta, hendrerit augue at, laoreet ex.\nNam sollicitudin tempor ligula quis condimentum.\nDonec id pretium sapien, eu pharetra neque. In tempus tortor in congue cursus.";
+
+        assert_eq!(count_lines(text), 6);
+    }
 }

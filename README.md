@@ -4,14 +4,21 @@
 count lines of a file or of all files in directory
 
 USAGE:
+
         line-counter.exe [OPTIONS]... [PATH]
 
+
 OPTIONS:
+
         -f      --filter <EXTENSIONS>...                Comma separated list of extensions, will only count lines of files with these extensions
+  
                 --format=[FORMAT]                       Format the output in a list, valid formats are: DEFAULT, BULLET, MARKDOWN, and NUMERIC
+  
         -r,     --recursive                             Search through subdirectories
+  
         -h,     -help                                   Prints help information
 
 PATH:
+
         Path to search
 

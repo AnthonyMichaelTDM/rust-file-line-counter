@@ -15,11 +15,11 @@ pub enum FORMAT {
 }
 
 //handles parsing of arguments
-const VALID_OPTIONS: [&str; 11] = [
+const VALID_OPTIONS: [&str; 10] = [
     "-f", "--filter",
     "--format=DEFAULT","--format=BULLET", "--format=MARKDOWN","--format=NUMERIC",
     "-r", "--recursive",
-    "-h", "--help", "help",
+    "-h", "--help",
 ];
 #[derive(Debug, PartialEq)]
 pub struct Config {
